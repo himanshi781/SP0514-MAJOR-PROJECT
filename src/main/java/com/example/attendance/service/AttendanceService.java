@@ -7,7 +7,6 @@ import com.example.attendance.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -22,67 +21,63 @@ public class AttendanceService {
         this.userRepository = userRepository;
     }
 
-    public Attendance markAttendance(Long userId,
-                                     double latitude,
-                                     double longitude,
-                                     String deviceId) {
+    public Attendance markAttendance(User user, Attendance newAttendance) {
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        Attendance attendance = new Attendance();
-        attendance.setUser(user);
-        attendance.setLoginTime(LocalDateTime.now());
-        attendance.setLatitude(latitude);
-        attendance.setLongitude(longitude);
-        attendance.setDeviceId(deviceId);
-
-        Attendance savedAttendance = attendanceRepository.save(attendance);
-
-        // Apply fraud detection after saving
-        applyFraudRules(user, savedAttendance);
-
-        return savedAttendance;
-    }
-
-    private void applyFraudRules(User user, Attendance newAttendance) {
-
-        List<Attendance> previous =
+        // ⭐ FIXED LINE (sorted history)
+        List<Attendance> history =
                 attendanceRepository.findByUserIdOrderByLoginTimeDesc(user.getId());
 
-        if (previous.size() < 2) return;
+        if (!history.isEmpty()) {
+            // since list is DESC, first element is latest
+            Attendance lastAttendance = history.get(0);
+            applyFraudRules(user, lastAttendance, newAttendance);
+        }
 
-        // The second record is the previous login
-        Attendance lastAttendance = previous.get(1);
+        newAttendance.setUser(user);
+        return attendanceRepository.save(newAttendance);
+    }
 
-        // Rule 1: Rapid login within 1 minute
-        long minutes = Duration.between(
+    private void applyFraudRules(User user, Attendance lastAttendance, Attendance newAttendance) {
+
+        boolean fraudDetected = false;
+
+        long seconds = Duration.between(
                 lastAttendance.getLoginTime(),
                 newAttendance.getLoginTime()
-        ).toMinutes();
+        ).getSeconds();
 
-        if (minutes < 1) {
-            System.out.println("Rapid Login detected!");
+        // ⭐ Rule 1: Rapid login
+        if (seconds < 60) {
+            System.out.println("Rapid login detected");
             user.setFraudScore(user.getFraudScore() + 20);
+            fraudDetected = true;
         }
 
-        // Rule 2: Device change
+        // ⭐ Rule 2: Device change
         if (!lastAttendance.getDeviceId().equals(newAttendance.getDeviceId())) {
-            System.out.println("Device change detected!");
+            System.out.println("Device change detected");
             user.setFraudScore(user.getFraudScore() + 30);
+            fraudDetected = true;
         }
 
-        // Rule 3: Large location jump
+        // ⭐ Rule 3: Location jump
         double latDiff = Math.abs(lastAttendance.getLatitude() - newAttendance.getLatitude());
         double longDiff = Math.abs(lastAttendance.getLongitude() - newAttendance.getLongitude());
 
         if (latDiff > 5 || longDiff > 5) {
+            System.out.println("Location jump detected");
             user.setFraudScore(user.getFraudScore() + 25);
+            fraudDetected = true;
         }
 
-        // Rule 4: Flag if fraudScore > 50
+        // ⭐ Rule 4: Flag user if fraudScore high
         if (user.getFraudScore() > 50) {
             user.setFlagged(true);
+        }
+
+        // ⭐ Mark attendance fraud
+        if (fraudDetected) {
+            newAttendance.setFlagged(true);
         }
 
         userRepository.save(user);
