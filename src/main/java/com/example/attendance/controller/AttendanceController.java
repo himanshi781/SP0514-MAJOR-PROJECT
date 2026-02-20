@@ -26,13 +26,17 @@ public class AttendanceController {
         this.userRepository = userRepository;
     }
 
-    // ⭐ POST Attendance (UPDATED)
+    // ⭐ POST Attendance (UPDATED with WiFi/IP support)
     @PostMapping("/attendance")
     public Attendance markAttendance(@RequestBody Attendance attendance) {
 
         User user = userRepository.findById(attendance.getUser().getId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
+        // Ensure user is set properly
+        attendance.setUser(user);
+
+        // ⭐ Call service (service will now read ipAddress)
         return attendanceService.markAttendance(user, attendance);
     }
 
